@@ -1,0 +1,7 @@
+body { font-family: Arial, Helvetica, sans-serif; margin: 0; padding: 0; background: #0b0b0b; color: #eee; }
+.app { max-width: 900px; margin: 24px auto; padding: 20px; background: #121212; border-radius: 8px; }
+header { display:flex; justify-content:space-between; align-items:center; margin-bottom: 16px;}
+button { background:#1e90ff; color:white; border:none; padding:8px 12px; border-radius:6px; cursor:pointer; }
+input, select { padding:8px; border-radius:6px; border:1px solid #333; background:#0b0b0b; color:#eee; }
+.card { background:#0f0f0f; padding:12px; margin:8px 0; border-radius:6px; border:1px solid #222; }
+small { color:#aaa; }

@@ -1,0 +1,3 @@
+// Replace with the compiled contract ABI (hardhat artifacts). Put the actual ABI here after compilation.
+// Example: paste the contents of artifacts/contracts/MemeGrave.sol/MemeGrave.json -> abi
+[]
