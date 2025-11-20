@@ -1,0 +1,108 @@
+name: Build and Deploy to VestaCP (PM2)
+on:
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install dependencies & Build frontend
+        working-directory: frontend
+        run: |
+          if [ -f package-lock.json ]; then npm ci; else npm install; fi
+          if jq -e '.scripts.build' package.json >/dev/null 2>&1; then
+            npm run build
+          else
+            echo "No frontend build script; skipping."
+          fi
+
+      - name: Archive frontend and backend
+        run: |
+          mkdir -p deploy_artifact
+          # Archive frontend build
+          if [ -d frontend/build ]; then
+            tar -czf deploy_artifact/frontend.tar.gz -C frontend build
+          elif [ -d frontend/public ]; then
+            tar -czf deploy_artifact/frontend.tar.gz -C frontend public
+          elif [ -f frontend/index.html ]; then
+            tar -czf deploy_artifact/frontend.tar.gz -C frontend .
+          fi
+          # Archive backend (source + package.json)
+          tar -czf deploy_artifact/backend.tar.gz -C backend .
+
+      - name: Upload artifacts (temporary)
+        uses: actions/upload-artifact@v4
+        with:
+          name: site-artifacts
+          path: deploy_artifact/*.tar.gz
+
+      - name: Copy and deploy to server via SSH
+        uses: appleboy/ssh-action@v0.1.8
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT || '22' }}
+          script: |
+            set -e
+            DEPLOY_DIR="/home/admin/web/mem.modernoa.com/public_html"
+            BACKEND_DIR="/home/admin/web/mem.modernoa.com/backend"
+            TMP_DIR="/tmp/mem_deploy_$$"
+            mkdir -p "$TMP_DIR"
+            cd "$TMP_DIR"
+
+            # Fetch uploaded artifacts (scp could be used instead of this approach)
+            # The recommended approach is to use scp to copy site.tar.gz from the runner,
+            # but here we assume the action's scp step was used in prior job to transfer files.
+            echo "Ensure frontend.tar.gz and backend.tar.gz are in /tmp on the server before running this SSH step if required."
+
+            # If files were transferred to /tmp/site.tar.gz by previous step, extract and deploy
+            if [ -f /tmp/frontend.tar.gz ]; then
+              mkdir -p "$TMP_DIR/frontend"
+              tar -xzf /tmp/frontend.tar.gz -C "$TMP_DIR/frontend"
+              # copy build files to DEPLOY_DIR
+              mkdir -p "$DEPLOY_DIR"
+              rsync -av --delete "$TMP_DIR/frontend/build/" "$DEPLOY_DIR"/ || true
+              chown -R admin:admin "$DEPLOY_DIR" || true
+            fi
+
+            if [ -f /tmp/backend.tar.gz ]; then
+              mkdir -p "$TMP_DIR/backend"
+              tar -xzf /tmp/backend.tar.gz -C "$TMP_DIR/backend"
+              mkdir -p "$BACKEND_DIR"
+              rsync -av --delete "$TMP_DIR/backend/" "$BACKEND_DIR"/
+              chown -R admin:admin "$BACKEND_DIR" || true
+
+              # Install backend dependencies
+              if command -v npm >/dev/null 2>&1; then
+                ( cd "$BACKEND_DIR" && npm ci --production )
+              fi
+
+              # Restart via PM2 (ensure pm2 installed on server)
+              if command -v pm2 >/dev/null 2>&1; then
+                if [ -f "$BACKEND_DIR/ecosystem.config.js" ]; then
+                  pm2 startOrReload "$BACKEND_DIR/ecosystem.config.js" --env production || true
+                  pm2 save || true
+                else
+                  pm2 restart memegrave-backend || pm2 start "$BACKEND_DIR/index.js" --name memegrave-backend || true
+                  pm2 save || true
+                fi
+              else
+                echo "pm2 not installed on server. Install with: npm i -g pm2"
+              fi
+            fi
+
+            # Cleanup
+            rm -rf "$TMP_DIR"
+            echo "Remote deploy step finished."
